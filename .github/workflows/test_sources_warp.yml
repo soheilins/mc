@@ -1,0 +1,25 @@
+name: Test Music Sources with WARP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install yt-dlp and requests
+        run: pip install yt-dlp requests
+      - name: Connect Cloudflare WARP
+        uses: viperadnan-git/setup-warp@v1
+        with:
+          mode: client
+          stack: ipv4
+      - name: Show IP after WARP
+        run: curl ifconfig.me
+      - name: Run source tests
+        run: python test_sources_warp.py
