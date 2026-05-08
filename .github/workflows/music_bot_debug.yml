@@ -1,0 +1,37 @@
+name: Music Bot (One‑Shot with WARP & Commit)
+
+on:
+  workflow_dispatch:   # manual trigger only
+
+jobs:
+  run-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect to Cloudflare WARP
+        uses: viperadnan-git/setup-warp@v1
+        with:
+          mode: client
+          stack: ipv4
+
+      - name: Install ffmpeg and yt-dlp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install yt-dlp requests
+
+      - name: Run one‑shot music download & send
+        env:
+          RUBIKA_TOKEN: ${{ secrets.RUBIKA_TOKEN }}
+        run: python music_bot_once.py
+
+      - name: Commit log file back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add sent_songs.txt
+          git commit -m "Update sent songs log" || echo "No changes to commit"
+          git push
