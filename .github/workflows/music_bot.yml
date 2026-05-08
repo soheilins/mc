@@ -1,17 +1,18 @@
-name: Music Bot (with WARP)
+name: Music Bot (with Cloudflare WARP)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'   # every 6 hours
 
 jobs:
   run-music-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360     # 6 hours max
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Connect to Cloudflare WARP
         uses: viperadnan-git/setup-warp@v1
