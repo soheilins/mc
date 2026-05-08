@@ -1,4 +1,4 @@
-name: Test Pirate Sources
+name: Test Music Archives
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,5 +14,5 @@ jobs:
           python-version: '3.10'
       - name: Install requests
         run: pip install requests
-      - name: Run pirate tests
-        run: python test_pirate.py
+      - name: Run archive tests
+        run: python test_archives.py
