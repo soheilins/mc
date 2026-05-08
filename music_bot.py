@@ -3,6 +3,7 @@ import os
 import sys
 import random
 import requests
+import subprocess
 import time
 from pathlib import Path
 from datetime import datetime
@@ -13,72 +14,73 @@ if not RUBIKA_TOKEN:
     print("❌ RUBIKA_TOKEN missing", flush=True)
     sys.exit(1)
 
-# Add all your recipient User IDs here
 RECIPIENT_IDS = [
-    "b0JWE2R0cEO00b3bfc6eb91ee17556ca",  # Your user ID
-    # Add more user IDs here
+    "b0JWE2R0cEO00b3bfc6eb91ee17556ca",  # your ID
 ]
 
 ARTIST_FILE = "artists.txt"
 DOWNLOADS_DIR = Path("downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
-# Rubika API endpoints
 BASE_API = f"https://botapi.rubika.ir/v3/{RUBIKA_TOKEN}"
 REQUEST_SEND_FILE_URL = f"{BASE_API}/requestSendFile"
 SEND_FILE_URL = f"{BASE_API}/sendFile"
 SEND_MESSAGE_URL = f"{BASE_API}/sendMessage"
 
-# MusicAPI endpoint (no key required)
-MUSIC_API = "https://musicapi.vercel.app/api/search"
-
-# ========== HELPER FUNCTIONS ==========
-
+# ========== HELPERS ==========
 def load_artists():
-    """Load artist list from artists.txt (one per line)."""
     if not os.path.exists(ARTIST_FILE):
         return []
     with open(ARTIST_FILE, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
-def get_song_from_api(artist_name):
-    """Search MusicAPI for a popular song by the artist.
-    Returns (mp3_url, song_display_string) or (None, None).
+def search_and_download(artist_name):
     """
-    params = {"q": artist_name}
-    try:
-        resp = requests.get(MUSIC_API, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("tracks") and len(data["tracks"]) > 0:
-            # Pick a random track from the first few results
-            track = random.choice(data["tracks"])
-            mp3_url = track.get("url")
-            song_title = track.get("title", "Unknown Title")
-            artist = track.get("artist", artist_name)
-            display = f"{song_title} - {artist}"
-            return mp3_url, display
-    except Exception as e:
-        print(f"⚠️ MusicAPI error for {artist_name}: {e}", flush=True)
-    return None, None
+    Use yt-dlp with Android client to download the most popular song by the artist.
+    Returns (file_path, display_string) or (None, None).
+    """
+    search_query = f"ytsearch1:{artist_name} popular songs"
+    output_template = str(DOWNLOADS_DIR / f"%(title)s.%(ext)s")
 
-def download_mp3(url, filename):
-    """Download MP3 from a direct URL to the downloads folder."""
+    # Critical arguments to avoid "Sign in to confirm you're not a bot"
+    cmd = [
+        "yt-dlp",
+        search_query,
+        "-x", "--audio-format", "mp3",
+        "--audio-quality", "0",
+        "-o", output_template,
+        "--no-playlist",
+        "--restrict-filenames",
+        "--extractor-args", "youtube:player_client=android",   # Android client skips login
+        "--user-agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+        "--sleep-interval", "1",      # be polite
+        "--max-sleep-interval", "3",
+        "--no-check-certificate"
+    ]
+
     try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        file_path = DOWNLOADS_DIR / filename
-        with open(file_path, "wb") as f:
-            f.write(resp.content)
-        return file_path
+        print(f"🔍 Searching for '{artist_name}'...", flush=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        if result.returncode != 0:
+            print(f"⚠️ yt-dlp stderr: {result.stderr[-300:]}", flush=True)
+            return None, None
+        downloaded = list(DOWNLOADS_DIR.glob("*.mp3"))
+        if not downloaded:
+            return None, None
+        latest = max(downloaded, key=lambda f: f.stat().st_mtime)
+        song_title = latest.stem.replace("_", " ")
+        display = f"{song_title} - {artist_name}"
+        return latest, display
+    except subprocess.TimeoutExpired:
+        print(f"⚠️ Timeout for {artist_name}", flush=True)
+        return None, None
     except Exception as e:
-        print(f"❌ Download failed: {e}", flush=True)
-        return None
+        print(f"⚠️ Error: {e}", flush=True)
+        return None, None
 
 def send_music_file(chat_id, file_path, caption):
-    """Upload and send an MP3 file to a Rubika user."""
     try:
-        # Step 1: Request upload URL
+        # request upload URL
         resp = requests.post(REQUEST_SEND_FILE_URL, json={"type": "Music"}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -86,7 +88,7 @@ def send_music_file(chat_id, file_path, caption):
             return False
         upload_url = data["data"]["upload_url"]
 
-        # Step 2: Upload file
+        # upload
         with open(file_path, "rb") as f:
             files = {"file": (file_path.name, f, "audio/mpeg")}
             up_resp = requests.post(upload_url, files=files, timeout=30)
@@ -96,7 +98,7 @@ def send_music_file(chat_id, file_path, caption):
                 return False
             file_id = up_data["data"]["file_id"]
 
-        # Step 3: Send file
+        # send
         send_payload = {
             "chat_id": chat_id,
             "file_id": file_id,
@@ -104,34 +106,28 @@ def send_music_file(chat_id, file_path, caption):
         }
         send_resp = requests.post(SEND_FILE_URL, json=send_payload, timeout=15)
         send_resp.raise_for_status()
-        print(f"✅ Sent '{caption}' to {chat_id}", flush=True)
+        print(f"✅ Sent '{caption}'", flush=True)
         return True
     except Exception as e:
-        print(f"❌ Send error to {chat_id}: {e}", flush=True)
+        print(f"❌ Send error: {e}", flush=True)
         return False
 
 def send_text_message(chat_id, text):
-    """Send a plain text message (for error notifications)."""
     try:
         requests.post(SEND_MESSAGE_URL, json={"chat_id": chat_id, "text": text}, timeout=10)
-    except Exception as e:
-        print(f"⚠️ Text send error to {chat_id}: {e}", flush=True)
+    except Exception:
+        pass
 
 def cleanup():
-    """Delete all temporary MP3 files."""
     for f in DOWNLOADS_DIR.glob("*.mp3"):
-        try:
-            f.unlink()
-        except Exception:
-            pass
+        f.unlink(missing_ok=True)
 
 # ========== MAIN LOOP ==========
 def main():
     print("="*50, flush=True)
-    print("🎵 MUSIC BOT STARTED (MusicAPI version)", flush=True)
-    print(f"⏰ Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-    print("⏳ Will run for ~5.9 hours, sending a song every 10 minutes", flush=True)
-    print(f"📨 Recipients: {len(RECIPIENT_IDS)} user(s)", flush=True)
+    print("🎵 MUSIC BOT (yt-dlp Android client)", flush=True)
+    print(f"⏰ Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print("⏳ Running for ~5.9 hours, song every 10 minutes", flush=True)
     print("="*50, flush=True)
 
     artists = load_artists()
@@ -140,71 +136,59 @@ def main():
         sys.exit(1)
     print(f"🎤 Loaded {len(artists)} artists", flush=True)
 
-    sent_this_run = set()          # track songs sent in this 6-hour run
-    max_runtime_seconds = 5.9 * 3600
+    sent_this_run = set()
+    max_runtime = 5.9 * 3600
     start_time = time.time()
     iteration = 0
 
-    while time.time() - start_time < max_runtime_seconds:
+    while time.time() - start_time < max_runtime:
         iteration += 1
         print(f"\n🔄 ITERATION {iteration} at {datetime.now().strftime('%H:%M:%S')}", flush=True)
-
-        # Shuffle artists for variety
         random.shuffle(artists)
         success = False
 
         for artist in artists:
             print(f"🎲 Trying artist: {artist}", flush=True)
-            mp3_url, song_display = get_song_from_api(artist)
-            if not mp3_url:
-                print(f"⚠️ No results for {artist}", flush=True)
-                continue
-
-            # Create a unique identifier to avoid duplicates
-            song_id = f"{artist.lower()} - {song_display.lower()}"
-            if song_id in sent_this_run:
-                print(f"⏩ '{song_display}' already sent this run, skipping...", flush=True)
-                continue
-
-            # Download the MP3
-            safe_filename = f"{song_display.replace(' ', '_')[:50]}.mp3"
-            file_path = download_mp3(mp3_url, safe_filename)
+            file_path, song_display = search_and_download(artist)
             if not file_path:
                 continue
 
-            # Send to all recipients
-            success_count = 0
+            song_id = f"{artist.lower()} - {song_display.lower()}"
+            if song_id in sent_this_run:
+                print(f"⏩ Already sent this run, skipping...", flush=True)
+                file_path.unlink(missing_ok=True)
+                continue
+
+            # send to all recipients
+            sent_ok = False
             for uid in RECIPIENT_IDS:
                 if send_music_file(uid, file_path, song_display):
-                    success_count += 1
-
-            # Delete temp file
+                    sent_ok = True
             file_path.unlink(missing_ok=True)
 
-            if success_count > 0:
+            if sent_ok:
                 sent_this_run.add(song_id)
-                print(f"📝 Logged '{song_display}'. Total sent this run: {len(sent_this_run)}", flush=True)
+                print(f"📝 Logged. Total this run: {len(sent_this_run)}", flush=True)
                 success = True
                 break
             else:
-                print(f"⚠️ Could not send '{song_display}' to any recipient, not logging.", flush=True)
+                print(f"⚠️ Send failed, not logging", flush=True)
 
         if not success:
-            error_msg = "❌ Could not find any new song this cycle. Check artists or try again later."
+            error_msg = "❌ Could not find/send any new song this cycle."
             for uid in RECIPIENT_IDS:
                 send_text_message(uid, error_msg)
             print(error_msg, flush=True)
 
-        # Wait 10 minutes, but respect the overall runtime limit
         elapsed = time.time() - start_time
-        if elapsed + 600 > max_runtime_seconds:
-            print("⏰ Reached runtime limit, exiting.", flush=True)
+        if elapsed + 600 > max_runtime:
+            print("⏰ Runtime limit reached, exiting.", flush=True)
             break
         print("⏳ Sleeping 600 seconds...", flush=True)
         time.sleep(600)
 
-    print("\n🏁 6-hour run completed. Exiting.", flush=True)
     cleanup()
+    print("🏁 6-hour run completed.", flush=True)
 
 if __name__ == "__main__":
     main()
