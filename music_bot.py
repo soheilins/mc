@@ -16,7 +16,7 @@ if not RUBIKA_TOKEN:
 
 # Hardcoded recipients (add as many as you need)
 RECIPIENT_IDS = [
-    "b0JWE2R0cCz01c6f676803e07bf4e745",
+    "b0JWE2R0cEO00b3bfc6eb91ee17556ca",
     # "another_user_id",
 ]
 
