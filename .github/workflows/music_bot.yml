@@ -1,4 +1,4 @@
-name: Music Bot (No WARP test)
+name: Music Bot (SoundCloud)
 
 on:
   workflow_dispatch:
